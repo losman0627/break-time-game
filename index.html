@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>10-Second Dodge</title>
+  <style>
+    :root {
+      --bg-1: #0b1020;
+      --bg-2: #111b3a;
+      --panel: rgba(255, 255, 255, 0.08);
+      --text: #f2f6ff;
+      --muted: #b5c2e0;
+      --accent: #6ee7ff;
+      --danger: #ff6b8b;
+      --win: #63ffa6;
+      --shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      color: var(--text);
+      font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
+      background:
+        radial-gradient(1200px 800px at 20% 10%, #1b2a58 0%, transparent 45%),
+        radial-gradient(1000px 700px at 90% 80%, #102a4f 0%, transparent 45%),
+        linear-gradient(160deg, var(--bg-1), var(--bg-2));
+      overflow: hidden;
+    }
+
+    .app {
+      width: min(92vw, 900px);
+      display: grid;
+      gap: 12px;
+    }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      border-radius: 14px;
+      background: var(--panel);
+      backdrop-filter: blur(8px);
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255,255,255,0.1);
+      flex-wrap: wrap;
+    }
+
+    .stat { font-weight: 700; letter-spacing: 0.02em; }
+    .muted { color: var(--muted); font-size: 0.92rem; }
+
+    .game-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      max-height: 72vh;
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255,255,255,0.12);
+      background: linear-gradient(180deg, #1f2f5f 0%, #0f1733 100%);
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: rgba(6, 9, 18, 0.62);
+      text-align: center;
+      padding: 20px;
+      transition: opacity .25s ease;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 16px;
+      padding: 22px 18px;
+      width: min(92%, 500px);
+      backdrop-filter: blur(8px);
+      box-shadow: var(--shadow);
+    }
+
+    h1, h2 { margin: 0 0 8px; }
+    p { margin: 8px 0; color: var(--muted); }
+
+    .btn {
+      border: none;
+      border-radius: 999px;
+      padding: 10px 18px;
+      margin-top: 10px;
+      font-size: 1rem;
+      font-weight: 700;
+      color: #07132d;
+      background: linear-gradient(135deg, var(--accent), #8df5ff);
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(110, 231, 255, 0.35);
+      transition: transform .12s ease, filter .2s ease;
+    }
+    .btn:hover { transform: translateY(-1px); filter: brightness(1.04); }
+    .btn:active { transform: translateY(1px); }
+
+    .hidden { opacity: 0; pointer-events: none; }
+    .result-lose h2 { color: var(--danger); }
+    .result-win h2 { color: var(--win); }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="hud">
+      <div class="stat">⏱ Timer: <span id="timer">10.0</span>s</div>
+      <div class="stat">⭐ Score: <span id="score">0</span></div>
+      <div class="muted">Move: ←/A and →/D &nbsp;•&nbsp; Restart: Space</div>
+    </section>
+
+    <section class="game-wrap">
+      <canvas id="game" width="960" height="540" aria-label="10-Second Dodge game"></canvas>
+
+      <div id="startOverlay" class="overlay">
+        <div class="card">
+          <h1>10-Second Dodge</h1>
+          <p>Survive for 10 seconds while obstacles rain down.</p>
+          <p>Controls: <strong>Left/Right</strong> arrows or <strong>A/D</strong>.</p>
+          <button id="startBtn" class="btn">Start Game</button>
+        </div>
+      </div>
+
+      <div id="resultOverlay" class="overlay hidden">
+        <div id="resultCard" class="card">
+          <h2 id="resultTitle">Game Over</h2>
+          <p id="resultText">Press Space to restart.</p>
+          <button id="restartBtn" class="btn">Play Again</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ===== Main game state =====
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    const timerEl = document.getElementById('timer');
+    const scoreEl = document.getElementById('score');
+
+    const startOverlay = document.getElementById('startOverlay');
+    const resultOverlay = document.getElementById('resultOverlay');
+    const resultTitle = document.getElementById('resultTitle');
+    const resultText = document.getElementById('resultText');
+    const resultCard = document.getElementById('resultCard');
+
+    const state = {
+      running: false,
+      ended: false,
+      timeLeft: 10,
+      score: 0,
+      elapsed: 0,
+      spawnAccumulator: 0,
+      keys: { left: false, right: false },
+      flash: { active: false, color: '#fff', alpha: 0 },
+      player: { x: 460, y: 490, r: 18, speed: 430 },
+      obstacles: [],
+      particles: []
+    };
+
+    // ===== Helpers =====
+    const rand = (min, max) => Math.random() * (max - min) + min;
+
+    function resetGame() {
+      state.running = true;
+      state.ended = false;
+      state.timeLeft = 10;
+      state.score = 0;
+      state.elapsed = 0;
+      state.spawnAccumulator = 0;
+      state.player.x = canvas.width / 2;
+      state.obstacles = [];
+      state.particles = [];
+      state.flash.active = false;
+      timerEl.textContent = state.timeLeft.toFixed(1);
+      scoreEl.textContent = '0';
+      resultOverlay.classList.add('hidden');
+    }
+
+    function spawnObstacle(difficulty) {
+      const size = rand(16, 34);
+      state.obstacles.push({
+        x: rand(size, canvas.width - size),
+        y: -size,
+        size,
+        speed: rand(140, 250) + difficulty * 90
+      });
+    }
+
+    function spawnParticles(x, y, color) {
+      for (let i = 0; i < 38; i++) {
+        state.particles.push({
+          x, y,
+          vx: rand(-220, 220),
+          vy: rand(-220, 220),
+          life: rand(0.35, 0.8),
+          age: 0,
+          size: rand(2, 5),
+          color
+        });
+      }
+    }
+
+    function endGame(win) {
+      state.running = false;
+      state.ended = true;
+      state.flash = { active: true, color: win ? '#63ffa6' : '#ff6b8b', alpha: 0.42 };
+      spawnParticles(state.player.x, state.player.y, win ? '#63ffa6' : '#ff6b8b');
+
+      resultTitle.textContent = win ? 'You Win!' : 'Game Over';
+      resultText.textContent = `Score: ${state.score} • Press Space to restart.`;
+      resultCard.classList.toggle('result-win', win);
+      resultCard.classList.toggle('result-lose', !win);
+      resultOverlay.classList.remove('hidden');
+    }
+
+    // ===== Update loop =====
+    let last = performance.now();
+    function tick(now) {
+      const dt = Math.min((now - last) / 1000, 0.033);
+      last = now;
+
+      update(dt);
+      draw();
+      requestAnimationFrame(tick);
+    }
+
+    function update(dt) {
+      // Small fade of screen flash effect after win/loss.
+      if (state.flash.active) {
+        state.flash.alpha -= dt * 1.5;
+        if (state.flash.alpha <= 0) state.flash.active = false;
+      }
+
+      // Particle updates for polish effects.
+      for (let i = state.particles.length - 1; i >= 0; i--) {
+        const p = state.particles[i];
+        p.age += dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 400 * dt;
+        if (p.age >= p.life) state.particles.splice(i, 1);
+      }
+
+      if (!state.running) return;
+
+      const move = (state.keys.right ? 1 : 0) - (state.keys.left ? 1 : 0);
+      state.player.x += move * state.player.speed * dt;
+      state.player.x = Math.max(state.player.r, Math.min(canvas.width - state.player.r, state.player.x));
+
+      state.elapsed += dt;
+      state.timeLeft = Math.max(0, 10 - state.elapsed);
+      timerEl.textContent = state.timeLeft.toFixed(1);
+
+      // Difficulty ramps as time passes.
+      const difficulty = Math.min(1.8, state.elapsed / 5);
+      const spawnEvery = Math.max(0.18, 0.65 - difficulty * 0.24);
+      state.spawnAccumulator += dt;
+      while (state.spawnAccumulator >= spawnEvery) {
+        spawnObstacle(difficulty);
+        state.spawnAccumulator -= spawnEvery;
+      }
+
+      for (let i = state.obstacles.length - 1; i >= 0; i--) {
+        const o = state.obstacles[i];
+        o.y += o.speed * dt;
+
+        // Circle-rectangle collision approximation.
+        const px = state.player.x;
+        const py = state.player.y;
+        const nearestX = Math.max(o.x - o.size / 2, Math.min(px, o.x + o.size / 2));
+        const nearestY = Math.max(o.y - o.size / 2, Math.min(py, o.y + o.size / 2));
+        const dx = px - nearestX;
+        const dy = py - nearestY;
+
+        if (dx * dx + dy * dy < state.player.r * state.player.r) {
+          endGame(false);
+          return;
+        }
+
+        if (o.y - o.size > canvas.height) {
+          state.obstacles.splice(i, 1);
+          state.score += 10;
+          scoreEl.textContent = String(state.score);
+        }
+      }
+
+      if (state.timeLeft <= 0) {
+        state.score += 100;
+        scoreEl.textContent = String(state.score);
+        endGame(true);
+      }
+    }
+
+    // ===== Drawing =====
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Soft grid background to add visual depth.
+      ctx.globalAlpha = 0.13;
+      ctx.strokeStyle = '#dff4ff';
+      for (let x = 0; x < canvas.width; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
+      // Obstacles.
+      for (const o of state.obstacles) {
+        ctx.fillStyle = '#ff7f9a';
+        ctx.shadowColor = 'rgba(255,127,154,.45)';
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.roundRect(o.x - o.size / 2, o.y - o.size / 2, o.size, o.size, 6);
+        ctx.fill();
+      }
+
+      // Player character.
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = 'rgba(110, 231, 255, 0.65)';
+      ctx.fillStyle = '#6ee7ff';
+      ctx.beginPath();
+      ctx.arc(state.player.x, state.player.y, state.player.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Particles.
+      for (const p of state.particles) {
+        const lifePct = 1 - p.age / p.life;
+        ctx.globalAlpha = Math.max(0, lifePct);
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      if (state.flash.active) {
+        ctx.fillStyle = state.flash.color;
+        ctx.globalAlpha = state.flash.alpha;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // ===== Input handling =====
+    window.addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase();
+      if (key === 'arrowleft' || key === 'a') state.keys.left = true;
+      if (key === 'arrowright' || key === 'd') state.keys.right = true;
+
+      if (e.code === 'Space' && state.ended) {
+        e.preventDefault();
+        resetGame();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      const key = e.key.toLowerCase();
+      if (key === 'arrowleft' || key === 'a') state.keys.left = false;
+      if (key === 'arrowright' || key === 'd') state.keys.right = false;
+    });
+
+    document.getElementById('startBtn').addEventListener('click', () => {
+      startOverlay.classList.add('hidden');
+      resetGame();
+    });
+
+    document.getElementById('restartBtn').addEventListener('click', resetGame);
+
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>
